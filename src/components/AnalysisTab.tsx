@@ -1,5 +1,5 @@
 import type { EngineInfo, EngineStyle } from "../types";
-import { firstSan, policyPercents, statusLabel } from "../engine/Engine";
+import { firstSan, friendlyEngineError, policyPercents, statusLabel } from "../engine/Engine";
 
 function fmtPct(n: number | null): string {
   if (n == null || !Number.isFinite(n)) return "—";
@@ -21,6 +21,9 @@ export function AnalysisTab({
   const top = info.lines[0];
   const extras = info.lines.slice(1);
   const percents = az ? policyPercents(info.lines) : [];
+  const errorText =
+    friendlyEngineError(info.error) ||
+    (info.status === "error" ? "Engine restarted. Try again." : null);
 
   return (
     <div className="analysis-tab">
@@ -30,9 +33,9 @@ export function AnalysisTab({
           ···
         </button>
       </div>
-      {(info.status === "error" || info.error) && (
+      {(info.status === "error" || errorText) && (
         <div className="engine-error-block">
-          <div className="engine-error">{info.error || "Engine error"}</div>
+          <div className="engine-error">{errorText || "Engine restarted. Try again."}</div>
           {onRetry && (
             <button type="button" className="retry-btn" onClick={onRetry}>
               Retry engine
@@ -40,7 +43,7 @@ export function AnalysisTab({
           )}
         </div>
       )}
-      {!info.error && !az && (
+      {!errorText && !az && (
         <>
           <div className="analysis-depth">
             Depth: {info.depth || "—"}
@@ -56,7 +59,7 @@ export function AnalysisTab({
           {info.identity && <div className="engine-id">{info.identity}</div>}
         </>
       )}
-      {!info.error && az && (
+      {!errorText && az && (
         <>
           <div className="az-win">White {fmtPct(info.winPctWhite)}</div>
           <div className="az-draw">Draw {fmtPct(info.drawPct)}</div>

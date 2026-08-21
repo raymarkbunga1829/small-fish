@@ -12,7 +12,7 @@ import type {
   Tab,
 } from "./types";
 import { ENGINE_NAME, ENGINE_STYLE_LABEL, ENGINE_STYLES, PLAYER_NAME, STYLE_ENGINE_NAMES } from "./types";
-import { pawnsToWinPct, StockfishEngine } from "./engine/Engine";
+import { friendlyEngineError, pawnsToWinPct, StockfishEngine } from "./engine/Engine";
 import { cloneAtPly, classifySwing, endReason, loadGame, resultOf, uciToMove } from "./lib/chessUtil";
 import { SAMPLE_GAME } from "./lib/sample";
 import {
@@ -602,11 +602,16 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   });
 
+  const displayEngine: EngineInfo = {
+    ...engineInfo,
+    error: friendlyEngineError(engineInfo.error),
+  };
+
   const engineLabel =
-    engineInfo.status === "error"
+    displayEngine.status === "error"
       ? "Unavailable"
-      : engineInfo.identity
-        ? `${engineInfo.identity} (lite)`
+      : displayEngine.identity
+        ? `${displayEngine.identity} (lite)`
         : "Stockfish 18 (lite)";
 
   return (
@@ -638,7 +643,7 @@ export default function App() {
             moves={moves}
             comments={comments}
             evals={evals}
-            engine={engineInfo}
+            engine={displayEngine}
             engineStyle={settings.engineStyle}
             banner={over ? reason : null}
             onMove={makeMove}
@@ -684,7 +689,7 @@ export default function App() {
             onNewGame={() => newGame()}
             onResign={resign}
             onDraw={drawGame}
-            engineError={engineInfo.status === "error"}
+            engineError={displayEngine.status === "error"}
             onRetryEngine={() => void retryEngine()}
           />
         )}

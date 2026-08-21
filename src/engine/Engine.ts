@@ -103,6 +103,17 @@ export function firstSan(pvSan: string): string {
   return m?.[1] ?? pvSan.trim();
 }
 
+/** Never surface raw WASM / RuntimeError strings in the UI. */
+export function friendlyEngineError(message: string | null | undefined): string | null {
+  if (!message) return null;
+  if (/RuntimeError|Unreachable|n\.apply\s*\(\s*null/i.test(message)) {
+    return "Engine restarted. Try again.";
+  }
+  return message;
+}
+
+const FRIENDLY_RESTART = "Engine restarted. Try again.";
+
 export class StockfishEngine {
   private worker: Worker | null = null;
   private listeners = new Set<EngineListener>();
@@ -112,10 +123,10 @@ export class StockfishEngine {
   private currentTurn: "w" | "b" = "w";
   private playToken = 0;
   private loadToken = 0;
-  private supportsWdl = false;
   private style: EngineStyle = "stockfish";
   private searching = false;
   private mutex: Promise<void> = Promise.resolve();
+  private recovering = false;
 
   get snapshot(): EngineInfo {
     return this.info;
@@ -149,11 +160,21 @@ export class StockfishEngine {
     if (this.searching && this.worker) this.send("stop");
   }
 
+  private recoverFromAbort(): void {
+    if (this.recovering) return;
+    this.recovering = true;
+    void this.load()
+      .then(() => {
+        this.recovering = false;
+      })
+      .catch(() => {
+        this.recovering = false;
+        this.emit({ status: "error", error: FRIENDLY_RESTART });
+      });
+  }
+
   setStyle(style: EngineStyle): void {
     this.style = style;
-    if (this.info.status === "analyzing") {
-      void this.startAnalysis(this.currentFen, style).catch(() => undefined);
-    }
   }
 
   async load(): Promise<void> {
@@ -173,12 +194,9 @@ export class StockfishEngine {
         this.worker = null;
       }
       this.worker = new Worker(ENGINE_URL);
-      this.worker.onerror = (ev) => {
+      this.worker.onerror = () => {
         this.searching = false;
-        this.emit({
-          status: "error",
-          error: ev.message || "Failed to load Stockfish 18",
-        });
+        this.recoverFromAbort();
       };
       this.worker.onmessage = (ev: MessageEvent<unknown>) => {
         if (typeof ev.data === "object" && ev.data && "percent" in ev.data) return;
@@ -196,10 +214,10 @@ export class StockfishEngine {
       if (token !== this.loadToken) return;
       await this.waitFor((l) => l === "readyok", () => this.send("isready"), 15000);
       if (token !== this.loadToken) return;
-      this.send("setoption name Hash value 64");
+      this.send("setoption name Hash value 16");
       this.send("setoption name Threads value 1");
       this.send("setoption name Ponder value false");
-      if (this.supportsWdl) this.send("setoption name UCI_ShowWDL value true");
+      this.recovering = false;
       this.emit({
         status: "ready",
         identity: this.info.identity || "Stockfish 18",
@@ -207,7 +225,10 @@ export class StockfishEngine {
       });
     } catch (err) {
       if (token !== this.loadToken) return;
-      const message = err instanceof Error ? err.message : "Engine failed to start";
+      const message = this.recovering
+        ? FRIENDLY_RESTART
+        : friendlyEngineError(err instanceof Error ? err.message : "Engine failed to start") ||
+          FRIENDLY_RESTART;
       this.emit({ status: "error", error: message });
       throw err;
     }
@@ -218,7 +239,6 @@ export class StockfishEngine {
       const name = line.slice("id name".length).trim();
       this.emit({ identity: name.includes("Stockfish") ? name : "Stockfish 18" });
     }
-    if (line.startsWith("option name UCI_ShowWDL")) this.supportsWdl = true;
     for (const w of this.lineWaiters.slice()) {
       try {
         w(line);
@@ -419,9 +439,7 @@ export class StockfishEngine {
   configureAnalysis(style: EngineStyle = "stockfish"): void {
     this.style = style;
     this.send("setoption name UCI_LimitStrength value false");
-    this.send(`setoption name MultiPV value ${style === "stockfish" ? 3 : 4}`);
-    this.send("setoption name Hash value 128");
-    if (this.supportsWdl) this.send("setoption name UCI_ShowWDL value true");
+    this.send("setoption name MultiPV value 3");
   }
 
   setPosition(fen: string): void {
@@ -454,8 +472,7 @@ export class StockfishEngine {
         this.style = style;
         if (style === "chessapp") {
           const elo = DIFFICULTY_ELO[difficulty];
-          this.send("setoption name MultiPV value 4");
-          if (this.supportsWdl) this.send("setoption name UCI_ShowWDL value true");
+          this.send("setoption name MultiPV value 3");
           if (elo === null) {
             this.send("setoption name UCI_LimitStrength value false");
           } else {
@@ -535,7 +552,7 @@ export class StockfishEngine {
           chosenMultipv: null,
         });
         this.searching = true;
-        this.send("go infinite");
+        this.send("go depth 16");
       } catch {
         this.searching = false;
         this.send("isready");
