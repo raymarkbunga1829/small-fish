@@ -36,6 +36,7 @@ function namesFor(mode: GameMode, style: EngineStyle): { white: string; black: s
   const engine = STYLE_ENGINE_NAMES[style];
   if (mode === "white") return { white: PLAYER_NAME, black: engine };
   if (mode === "black") return { white: engine, black: PLAYER_NAME };
+  if (mode === "self") return { white: engine, black: engine };
   return { white: "White", black: "Black" };
 }
 
@@ -151,6 +152,8 @@ export default function App() {
     if (over) return false;
     if (reviewing) return false;
     if (!atTip) return false;
+    // Self-play: engine plays both sides
+    if (settings.gameMode === "self") return true;
     const turn = view.turn();
     if (settings.gameMode === "white") return turn === "b";
     return turn === "w";
@@ -212,6 +215,10 @@ export default function App() {
     const prior = new Set(Object.values(STYLE_ENGINE_NAMES));
     if (settings.gameMode === "white" && prior.has(black) && black !== engine) setBlack(engine);
     if (settings.gameMode === "black" && prior.has(white) && white !== engine) setWhite(engine);
+    if (settings.gameMode === "self") {
+      if (white !== engine) setWhite(engine);
+      if (black !== engine) setBlack(engine);
+    }
   }, [settings.engineStyle, settings.gameMode, white, black]);
 
   useEffect(() => {
@@ -298,7 +305,9 @@ export default function App() {
     busyRef.current = true;
     try {
       const style = styleRef.current;
-      const uci = await eng.playMove(pos.fen(), settings.difficulty, 900, style);
+      // Slightly longer think time in self-play so moves are watchable
+      const think = settings.gameMode === "self" ? 1100 : 900;
+      const uci = await eng.playMove(pos.fen(), settings.difficulty, think, style);
       if (!uci) return;
       const parsed = uciToMove(uci);
       if (!parsed) return;
@@ -315,13 +324,18 @@ export default function App() {
     } finally {
       busyRef.current = false;
     }
-  }, [pgn, ply, settings.difficulty, evals, white, black, event]);
+  }, [pgn, ply, settings.difficulty, settings.gameMode, evals, white, black, event]);
 
   useEffect(() => {
     if (engineTurn && engineInfo.status !== "loading" && engineInfo.status !== "error" && !analyzing) {
-      void playEngine();
+      // Small delay in self-play so the board updates are visible
+      const delay = settings.gameMode === "self" ? 450 : 0;
+      const t = window.setTimeout(() => {
+        void playEngine();
+      }, delay);
+      return () => window.clearTimeout(t);
     }
-  }, [engineTurn, engineInfo.status, analyzing, playEngine, pgn]);
+  }, [engineTurn, engineInfo.status, analyzing, playEngine, pgn, settings.gameMode]);
 
   useEffect(() => {
     const eng = engineRef.current;
