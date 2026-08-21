@@ -31,6 +31,17 @@ export default defineConfig({
       workbox: {
         maximumFileSizeToCacheInBytes: 12 * 1024 * 1024,
         globPatterns: ["**/*.{js,css,html,svg,png,wasm,ico,webmanifest}"],
+        runtimeCaching: [
+          {
+            urlPattern: /^https:\/\/cdn\.jsdelivr\.net\/npm\/stockfish@.*\.wasm$/,
+            handler: "CacheFirst",
+            options: {
+              cacheName: "stockfish-full",
+              expiration: { maxEntries: 2, maxAgeSeconds: 60 * 60 * 24 * 365 },
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
+        ],
       },
     }),
   ],

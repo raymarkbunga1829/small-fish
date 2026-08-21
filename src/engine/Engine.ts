@@ -4,7 +4,9 @@ import { DIFFICULTY_ELO } from "../types";
 import { movesToSanLine } from "../lib/chessUtil";
 import { pickHybridLine, resolveFen, wdlExpectedWhite } from "./hybrid";
 
-const ENGINE_URL = "/engine/stockfish-18-lite-single.js";
+const FULL_JS = "/engine/stockfish-18-single.js";
+const FULL_WASM = "https://cdn.jsdelivr.net/npm/stockfish@18.0.8/bin/stockfish-18-single.wasm";
+const LITE_JS = "/engine/stockfish-18-lite-single.js";
 
 export type EngineListener = (info: EngineInfo) => void;
 
@@ -127,6 +129,7 @@ export class StockfishEngine {
   private searching = false;
   private mutex: Promise<void> = Promise.resolve();
   private recovering = false;
+  private flavor: "full" | "lite" = "full";
 
   get snapshot(): EngineInfo {
     return this.info;
@@ -163,6 +166,7 @@ export class StockfishEngine {
   private recoverFromAbort(): void {
     if (this.recovering) return;
     this.recovering = true;
+    if (this.flavor === "full") this.flavor = "lite";
     void this.load()
       .then(() => {
         this.recovering = false;
@@ -182,8 +186,10 @@ export class StockfishEngine {
     this.playToken += 1;
     this.lineWaiters = [];
     this.searching = false;
-    try {
-      this.emit({ status: "loading", error: null });
+
+    const tryFlavor = async (lite: boolean): Promise<void> => {
+      this.flavor = lite ? "lite" : "full";
+      this.emit({ status: "loading", error: null, identity: "Stockfish 18" });
       if (this.worker) {
         try {
           this.send("quit");
@@ -193,24 +199,47 @@ export class StockfishEngine {
         this.worker.terminate();
         this.worker = null;
       }
-      this.worker = new Worker(ENGINE_URL);
+      const workerSrc = lite ? LITE_JS : FULL_JS + "#" + encodeURIComponent(FULL_WASM);
+      this.worker = new Worker(workerSrc);
       this.worker.onerror = () => {
         this.searching = false;
         this.recoverFromAbort();
       };
+      const channel = new MessageChannel();
+      channel.port1.onmessage = (ev) => {
+        const d = ev.data;
+        if (!d || typeof d !== "object" || !("percent" in d)) return;
+        const pct = Math.round(Number(d.percent) * 100);
+        if (Number.isFinite(pct) && pct >= 0) {
+          this.emit({ status: "loading", identity: pct > 0 ? `Stockfish 18 · ${pct}%` : "Stockfish 18" });
+        }
+      };
+      let progressPortSent = false;
       this.worker.onmessage = (ev: MessageEvent<unknown>) => {
         if (typeof ev.data === "object" && ev.data && "percent" in ev.data) return;
         if (typeof ev.data !== "string") return;
         const line = ev.data.trim();
         if (!line) return;
+        if (line.includes("WillOutputEngineDownloadProgress")) {
+          if (!progressPortSent) {
+            progressPortSent = true;
+            try {
+              this.worker?.postMessage({ progressPort: channel.port2 }, [channel.port2]);
+            } catch {
+              /* port already transferred */
+            }
+          }
+          return;
+        }
         try {
           this.handleLine(line);
         } catch {
           /* never break the worker message pump */
         }
       };
+      this.worker.postMessage("setoption name CanOutputEngineDownloadProgress");
 
-      await this.waitFor((l) => l === "uciok", () => this.send("uci"), 30000);
+      await this.waitFor((l) => l === "uciok", () => this.send("uci"), lite ? 30000 : 180000);
       if (token !== this.loadToken) return;
       await this.waitFor((l) => l === "readyok", () => this.send("isready"), 15000);
       if (token !== this.loadToken) return;
@@ -218,11 +247,26 @@ export class StockfishEngine {
       this.send("setoption name Threads value 1");
       this.send("setoption name Ponder value false");
       this.recovering = false;
+      const raw = (this.info.identity || "Stockfish 18").replace(/ · \d+%$/, "").replace(/ \(lite fallback\)$/, "");
+      const name = raw.includes("Stockfish") ? raw : "Stockfish 18";
       this.emit({
         status: "ready",
-        identity: this.info.identity || "Stockfish 18",
+        identity: lite ? `${name} (lite fallback)` : name,
         error: null,
       });
+    };
+
+    try {
+      if (this.flavor === "full") {
+        try {
+          await tryFlavor(false);
+          return;
+        } catch {
+          if (token !== this.loadToken) return;
+          this.flavor = "lite";
+        }
+      }
+      await tryFlavor(true);
     } catch (err) {
       if (token !== this.loadToken) return;
       const message = this.recovering
@@ -237,7 +281,8 @@ export class StockfishEngine {
   private handleLine(line: string): void {
     if (line.startsWith("id name")) {
       const name = line.slice("id name".length).trim();
-      this.emit({ identity: name.includes("Stockfish") ? name : "Stockfish 18" });
+      const base = name.includes("Stockfish") ? name : "Stockfish 18";
+      this.emit({ identity: this.flavor === "lite" ? `${base} (lite fallback)` : base });
     }
     for (const w of this.lineWaiters.slice()) {
       try {

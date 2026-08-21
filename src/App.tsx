@@ -610,9 +610,7 @@ export default function App() {
   const engineLabel =
     displayEngine.status === "error"
       ? "Unavailable"
-      : displayEngine.identity
-        ? `${displayEngine.identity} (lite)`
-        : "Stockfish 18 (lite)";
+      : displayEngine.identity || "Stockfish 18";
 
   return (
     <div className={`app ${dark ? "dark" : "light"}`}>

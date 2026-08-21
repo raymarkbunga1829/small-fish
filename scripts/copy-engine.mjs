@@ -6,6 +6,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const srcDir = join(root, "node_modules", "stockfish", "bin");
 const destDir = join(root, "public", "engine");
 const files = [
+  "stockfish-18-single.js",
   "stockfish-18-lite-single.js",
   "stockfish-18-lite-single.wasm",
 ];
@@ -21,4 +22,4 @@ for (const file of files) {
   copyFileSync(from, join(destDir, file));
 }
 
-console.log("Copied Stockfish 18 lite-single engine to public/engine/");
+console.log("Copied Stockfish 18 single JS + lite-single (js/wasm) to public/engine/; full wasm stays on jsDelivr");
