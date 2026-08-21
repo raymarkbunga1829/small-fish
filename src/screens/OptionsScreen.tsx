@@ -74,7 +74,7 @@ export function OptionsScreen({
           type="button"
           className="ios-row"
           onClick={() =>
-            patch({ gameMode: cycle<GameMode>(["white", "black", "human"], settings.gameMode) })
+            patch({ gameMode: cycle<GameMode>(["white", "black", "human", "self"], settings.gameMode) })
           }
         >
           <span>Game Mode</span>
@@ -158,12 +158,17 @@ export function OptionsScreen({
       </div>
       {settings.engineStyle === "alphazero" && (
         <p className="group-hint">
-          AlphaZero style uses Stockfish 18 with win%. Not DeepMind&apos;s weights.
+          AlphaZero style uses Stockfish 18 with win%. Not DeepMind's weights.
         </p>
       )}
       {settings.engineStyle === "chessapp" && (
         <p className="group-hint">
           Chess App is a hybrid on Stockfish 18 search. It does not out-Elo Stockfish.
+        </p>
+      )}
+      {settings.gameMode === "self" && (
+        <p className="group-hint">
+          Self-play: the engine plays both sides. Set AlphaZero style for the best experience.
         </p>
       )}
 
