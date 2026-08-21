@@ -11,7 +11,7 @@ import type {
   Settings,
   Tab,
 } from "./types";
-import { ENGINE_NAME, PLAYER_NAME, STYLE_ENGINE_NAMES } from "./types";
+import { ENGINE_NAME, ENGINE_STYLE_LABEL, ENGINE_STYLES, PLAYER_NAME, STYLE_ENGINE_NAMES } from "./types";
 import { pawnsToWinPct, StockfishEngine } from "./engine/Engine";
 import { cloneAtPly, classifySwing, endReason, loadGame, resultOf, uciToMove } from "./lib/chessUtil";
 import { SAMPLE_GAME } from "./lib/sample";
@@ -542,6 +542,12 @@ export default function App() {
       case "blunder":
         void blunderCheck();
         break;
+      case "engine":
+        setSettings((s) => {
+          const i = ENGINE_STYLES.indexOf(s.engineStyle);
+          return { ...s, engineStyle: ENGINE_STYLES[(i + 1) % ENGINE_STYLES.length] };
+        });
+        break;
       default:
         break;
     }
@@ -601,6 +607,7 @@ export default function App() {
             onNeedPromotion={onNeedPromotion}
             onJump={jump}
             onMore={() => setMoreOpen(true)}
+            onEngineStyle={(engineStyle) => setSettings((s) => ({ ...s, engineStyle }))}
           />
         )}
         {screen === "games" && (
@@ -640,6 +647,7 @@ export default function App() {
       <MoreMenu
         open={moreOpen}
         analyzing={analyzing}
+        engineName={ENGINE_STYLE_LABEL[settings.engineStyle]}
         onClose={() => setMoreOpen(false)}
         onAction={onMoreAction}
       />

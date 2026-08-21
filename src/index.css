@@ -83,7 +83,7 @@ button {
 }
 
 .play {
-  --below-board: 248px;
+  --below-board: 286px;
   height: 100dvh;
   overflow: hidden;
   min-height: 0;
@@ -842,6 +842,64 @@ button {
   padding: 4px 32px 10px;
   line-height: 1.35;
   margin: 0;
+}
+
+.ios-row.seg-row {
+  display: block;
+  padding: 12px 12px 11px;
+  min-height: 0;
+}
+
+.seg {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6px;
+  width: 100%;
+}
+
+.seg-btn {
+  min-height: 36px;
+  padding: 7px 4px;
+  border-radius: 8px;
+  border: 1.5px solid var(--blue);
+  color: var(--blue);
+  background: transparent;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.15;
+}
+
+.seg-btn.on {
+  background: var(--blue);
+  color: #fff;
+}
+
+.app.dark .seg-btn {
+  border-color: #8e8e93;
+  color: #e5e5ea;
+}
+
+.app.dark .seg-btn.on {
+  background: #3a3a3c;
+  border-color: #3a3a3c;
+  color: #fff;
+}
+
+.seg.compact {
+  gap: 5px;
+}
+
+.seg.compact .seg-btn {
+  min-height: 28px;
+  padding: 4px 2px;
+  font-size: 12px;
+  border-radius: 7px;
+}
+
+.play-seg {
+  padding: 0 12px 6px;
+  flex: 0 0 auto;
+  background: var(--card);
 }
 
 .switch {

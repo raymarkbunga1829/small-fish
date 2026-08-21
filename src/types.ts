@@ -109,6 +109,8 @@ export const TIME_LABEL: Record<TimeControl, string> = {
   "10+0": "10+0",
 };
 
+export const ENGINE_STYLES: EngineStyle[] = ["stockfish", "alphazero", "chessapp"];
+
 export const ENGINE_STYLE_LABEL: Record<EngineStyle, string> = {
   stockfish: "Stockfish",
   alphazero: "AlphaZero",

@@ -7,6 +7,7 @@ import { AnalysisTab } from "../components/AnalysisTab";
 import { GraphTab } from "../components/GraphTab";
 import { BottomChrome } from "../components/BottomChrome";
 import { GameOverBanner } from "../components/Overlays";
+import { EngineStyleSwitch } from "../components/EngineStyleSwitch";
 
 interface Props {
   chess: Chess;
@@ -38,6 +39,7 @@ interface Props {
   onNeedPromotion: (from: Square, to: Square, color: "w" | "b") => void;
   onJump: (ply: number) => void;
   onMore: () => void;
+  onEngineStyle: (style: EngineStyle) => void;
 }
 
 export function PlayScreen(props: Props) {
@@ -65,6 +67,13 @@ export function PlayScreen(props: Props) {
         blackMs={props.blackMs}
         showClocks={props.showClocks}
       />
+      <div className="play-seg">
+        <EngineStyleSwitch
+          compact
+          value={props.engineStyle}
+          onChange={props.onEngineStyle}
+        />
+      </div>
       <GameOverBanner text={props.banner} />
       <div className="panel">
         {props.tab === "game" && (

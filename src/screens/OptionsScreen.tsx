@@ -1,5 +1,6 @@
-import type { Difficulty, EngineStyle, GameMode, Settings, TimeControl } from "../types";
-import { DIFFICULTY_LABEL, ENGINE_STYLE_LABEL, MODE_LABEL, TIME_LABEL } from "../types";
+import type { Difficulty, GameMode, Settings, TimeControl } from "../types";
+import { DIFFICULTY_LABEL, MODE_LABEL, TIME_LABEL } from "../types";
+import { EngineStyleSwitch } from "../components/EngineStyleSwitch";
 
 interface Props {
   settings: Settings;
@@ -135,25 +136,16 @@ export function OptionsScreen({
 
       <div className="group-label">ENGINE</div>
       <div className="ios-group">
+        <div className="ios-row seg-row">
+          <EngineStyleSwitch
+            value={settings.engineStyle}
+            onChange={(engineStyle) => patch({ engineStyle })}
+          />
+        </div>
         <div className="ios-row">
           <span>Engine</span>
           <span className="row-value">{engineLabel}</span>
         </div>
-        <button
-          type="button"
-          className="ios-row"
-          onClick={() =>
-            patch({
-              engineStyle: cycle<EngineStyle>(
-                ["stockfish", "alphazero", "chessapp"],
-                settings.engineStyle,
-              ),
-            })
-          }
-        >
-          <span>Engine style</span>
-          <span className="row-value">{ENGINE_STYLE_LABEL[settings.engineStyle]} ›</span>
-        </button>
       </div>
       {settings.engineStyle === "alphazero" && (
         <p className="group-hint">
