@@ -2,7 +2,7 @@ export type Color = "w" | "b";
 export type PieceSymbol = "p" | "n" | "b" | "r" | "q" | "k";
 export type Square = `${"a" | "b" | "c" | "d" | "e" | "f" | "g" | "h"}${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8}`;
 
-export type GameMode = "white" | "black" | "human";
+export type GameMode = "white" | "black" | "human" | "self";
 export type Difficulty = "beginner" | "easy" | "average" | "hard" | "master" | "unlimited";
 export type TimeControl = "none" | "5+0" | "10+0";
 export type Screen = "play" | "games" | "options";
@@ -101,6 +101,7 @@ export const MODE_LABEL: Record<GameMode, string> = {
   white: "You play White",
   black: "You play Black",
   human: "Two players",
+  self: "Self-play (Engine vs Engine)",
 };
 
 export const TIME_LABEL: Record<TimeControl, string> = {
