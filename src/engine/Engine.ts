@@ -100,8 +100,39 @@ export function policyPercents(lines: PvLine[]): number[] {
   return exps.map((e) => (e / sum) * 100);
 }
 
+/** AlphaZero-style expected score (0..1 from the side to move perspective). */
+function expectedScore(line: PvLine, turn: "w" | "b"): number {
+  if (line.wdl) {
+    const stm = (line.wdl.w + 0.5 * line.wdl.d) / 1000;
+    return turn === "w" ? stm : 1 - stm;
+  }
+  if (line.mate !== null) {
+    const whiteMate = turn === "w" ? line.mate : -line.mate;
+    return whiteMate > 0 ? 0.99 : 0.01;
+  }
+  const pawns = ((line.scoreCp ?? 0) / 100) * (turn === "w" ? 1 : -1);
+  return 1 / (1 + Math.exp(-pawns / 2.8));
+}
+
+/** Soft selection of a PV line based on expected win probability (AlphaZero-like). */
+export function pickAlphaZeroLine(lines: PvLine[], turn: "w" | "b"): PvLine | null {
+  if (!lines.length) return null;
+  const scores = lines.map((l) => expectedScore(l, turn));
+  // Mild temperature so near-equal lines can compete
+  const T = 0.85;
+  const maxS = Math.max(...scores);
+  const exps = scores.map((s) => Math.exp((s - maxS) / T));
+  const sum = exps.reduce((a, b) => a + b, 0) || 1;
+  const probs = exps.map((e) => e / sum);
+  let best = 0;
+  for (let i = 1; i < probs.length; i++) {
+    if (probs[i] > probs[best]) best = i;
+  }
+  return lines[best];
+}
+
 export function firstSan(pvSan: string): string {
-  const m = pvSan.trim().match(/^(?:\d+\.+\s*)?(\S+)/);
+  const m = pvSan.trim().match(/^(?:\d+\.\s*)?(\S+)/);
   return m?.[1] ?? pvSan.trim();
 }
 
@@ -315,6 +346,18 @@ export class StockfishEngine {
             planSan: pick?.pvSan ?? this.info.planSan,
             chosenMultipv: pick?.multipv ?? this.info.chosenMultipv,
           });
+        } else if (this.style === "alphazero") {
+          let pick: PvLine | null = null;
+          try {
+            pick = pickAlphaZeroLine(this.info.lines, this.currentTurn);
+          } catch {
+            pick = null;
+          }
+          this.emit({
+            bestMove: pick?.pvUci[0] ?? engineBest,
+            planSan: pick?.pvSan ?? this.info.planSan,
+            chosenMultipv: pick?.multipv ?? this.info.chosenMultipv,
+          });
         } else {
           this.emit({ bestMove: engineBest });
         }
@@ -393,6 +436,7 @@ export class StockfishEngine {
     let bestMove = top?.pvUci[0] ?? this.info.bestMove;
     let planSan = top?.pvSan ?? this.info.planSan;
     let chosenMultipv = top?.multipv ?? 1;
+
     if (this.style === "chessapp") {
       try {
         const pick = pickHybridLine(this.currentFen, lines, this.currentTurn);
@@ -404,7 +448,19 @@ export class StockfishEngine {
       } catch {
         /* keep Stockfish top line */
       }
+    } else if (this.style === "alphazero") {
+      try {
+        const pick = pickAlphaZeroLine(lines, this.currentTurn);
+        if (pick) {
+          bestMove = pick.pvUci[0] ?? bestMove;
+          planSan = pick.pvSan;
+          chosenMultipv = pick.multipv;
+        }
+      } catch {
+        /* keep Stockfish top line */
+      }
     }
+
     this.emit({
       depth: top?.depth ?? depth,
       scoreText: top ? formatScore(top.scoreCp, top.mate, this.currentTurn) : this.info.scoreText,
@@ -484,6 +540,7 @@ export class StockfishEngine {
   configureAnalysis(style: EngineStyle = "stockfish"): void {
     this.style = style;
     this.send("setoption name UCI_LimitStrength value false");
+    // Both AlphaZero and Chess App benefit from multiple candidate lines
     this.send("setoption name MultiPV value 3");
   }
 
@@ -515,7 +572,9 @@ export class StockfishEngine {
         await this.stopUnlocked();
         if (token !== this.playToken) return null;
         this.style = style;
-        if (style === "chessapp") {
+
+        // AlphaZero and Chess App both use MultiPV so we can soft-select
+        if (style === "chessapp" || style === "alphazero") {
           const elo = DIFFICULTY_ELO[difficulty];
           this.send("setoption name MultiPV value 3");
           if (elo === null) {
@@ -527,6 +586,7 @@ export class StockfishEngine {
         } else {
           this.configurePlay(difficulty);
         }
+
         this.setPosition(fen);
         this.emit({
           status: "thinking",
@@ -546,6 +606,7 @@ export class StockfishEngine {
         );
         this.searching = false;
         if (token !== this.playToken) return null;
+
         if (style === "chessapp") {
           let pick: PvLine | null = null;
           try {
@@ -563,6 +624,25 @@ export class StockfishEngine {
           });
           return chosen;
         }
+
+        if (style === "alphazero") {
+          let pick: PvLine | null = null;
+          try {
+            pick = pickAlphaZeroLine(this.info.lines, this.currentTurn);
+          } catch {
+            pick = null;
+          }
+          const mv = pick?.pvUci[0] ?? line.split(/\s+/)[1];
+          const chosen = mv && mv !== "(none)" ? mv : null;
+          this.emit({
+            status: "ready",
+            bestMove: chosen,
+            planSan: pick?.pvSan ?? null,
+            chosenMultipv: pick?.multipv ?? null,
+          });
+          return chosen;
+        }
+
         const mv = line.split(/\s+/)[1];
         this.emit({ status: "ready", bestMove: mv && mv !== "(none)" ? mv : null });
         return mv && mv !== "(none)" ? mv : null;
