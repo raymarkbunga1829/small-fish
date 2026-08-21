@@ -127,6 +127,8 @@ export default function App() {
   const engineRef = useRef<StockfishEngine | null>(null);
   const busyRef = useRef(false);
   const toastTimer = useRef<number>(0);
+  const styleRef = useRef(settings.engineStyle);
+  styleRef.current = settings.engineStyle;
 
   const flash = (msg: string) => {
     setToast(msg);
@@ -262,6 +264,32 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const retryEngine = async () => {
+    const eng = engineRef.current;
+    if (!eng) return;
+    try {
+      await eng.load();
+      eng.setStyle(styleRef.current);
+      if (tab === "analysis" || analyzing) {
+        await eng.startAnalysis(view.fen(), styleRef.current);
+      }
+    } catch {
+      flash("Engine unavailable");
+    }
+  };
+
+  useEffect(() => {
+    const eng = engineRef.current;
+    if (!eng) return;
+    if (eng.snapshot.status === "error") {
+      void retryEngine();
+      return;
+    }
+    eng.setStyle(settings.engineStyle);
+    // Style taps only — retryEngine reads latest tab/analyzing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.engineStyle]);
+
   const playEngine = useCallback(async () => {
     const eng = engineRef.current;
     if (!eng || busyRef.current) return;
@@ -269,7 +297,8 @@ export default function App() {
     if (pos.isGameOver()) return;
     busyRef.current = true;
     try {
-      const uci = await eng.playMove(pos.fen(), settings.difficulty, 900, settings.engineStyle);
+      const style = styleRef.current;
+      const uci = await eng.playMove(pos.fen(), settings.difficulty, 900, style);
       if (!uci) return;
       const parsed = uciToMove(uci);
       if (!parsed) return;
@@ -277,14 +306,16 @@ export default function App() {
       const mv = tip.move(parsed);
       if (!mv) return;
       const nextEvals = evals.slice();
-      const gv = graphValue(settings.engineStyle, eng.snapshot);
+      const gv = graphValue(style, eng.snapshot);
       if (gv != null) nextEvals[tip.history().length - 1] = gv;
       setEvals(nextEvals);
       commitPgn(tip);
+    } catch {
+      flash("Engine busy — try again");
     } finally {
       busyRef.current = false;
     }
-  }, [pgn, ply, settings.difficulty, settings.engineStyle, evals, white, black, event]);
+  }, [pgn, ply, settings.difficulty, evals, white, black, event]);
 
   useEffect(() => {
     if (engineTurn && engineInfo.status !== "loading" && engineInfo.status !== "error" && !analyzing) {
@@ -296,9 +327,11 @@ export default function App() {
     const eng = engineRef.current;
     if (!eng) return;
     if (tab !== "analysis" && !analyzing) return;
-    void eng.startAnalysis(view.fen(), settings.engineStyle);
+    void eng.startAnalysis(view.fen(), styleRef.current).catch(() => {
+      flash("Analysis paused");
+    });
     return () => {
-      void eng.stop();
+      void eng.stop().catch(() => undefined);
     };
   }, [tab, ply, pgn, analyzing, settings.engineStyle]);
 
@@ -453,14 +486,19 @@ export default function App() {
   const toggleAnalyze = async () => {
     const eng = engineRef.current;
     if (!eng) return;
-    if (analyzing) {
-      await eng.stop();
+    try {
+      if (analyzing) {
+        await eng.stop();
+        setAnalyzing(false);
+        if (tab === "analysis") setTab("game");
+      } else {
+        setAnalyzing(true);
+        setTab("analysis");
+        await eng.startAnalysis(view.fen(), styleRef.current);
+      }
+    } catch {
+      flash("Analysis paused");
       setAnalyzing(false);
-      if (tab === "analysis") setTab("game");
-    } else {
-      setAnalyzing(true);
-      setTab("analysis");
-      await eng.startAnalysis(view.fen(), settings.engineStyle);
     }
   };
 
@@ -477,10 +515,11 @@ export default function App() {
       for (let i = 0; i < hist.length; i++) {
         const before = cloneAtPly(pgn, i - 1);
         const after = cloneAtPly(pgn, i);
-        const a = await eng.evaluatePosition(before.fen(), 10, settings.engineStyle);
-        const b = await eng.evaluatePosition(after.fen(), 10, settings.engineStyle);
+        const style = styleRef.current;
+        const a = await eng.evaluatePosition(before.fen(), 10, style);
+        const b = await eng.evaluatePosition(after.fen(), 10, style);
         if (b.pawns != null || b.winPctWhite != null || b.expectedPctWhite != null) {
-          scores[i] = graphValue(settings.engineStyle, {
+          scores[i] = graphValue(style, {
             scorePawns: b.pawns,
             winPctWhite: b.winPctWhite,
             expectedPctWhite: b.expectedPctWhite,
@@ -607,7 +646,11 @@ export default function App() {
             onNeedPromotion={onNeedPromotion}
             onJump={jump}
             onMore={() => setMoreOpen(true)}
-            onEngineStyle={(engineStyle) => setSettings((s) => ({ ...s, engineStyle }))}
+            onEngineStyle={(engineStyle) => {
+              styleRef.current = engineStyle;
+              setSettings((s) => ({ ...s, engineStyle }));
+            }}
+            onRetryEngine={() => void retryEngine()}
           />
         )}
         {screen === "games" && (
@@ -641,6 +684,8 @@ export default function App() {
             onNewGame={() => newGame()}
             onResign={resign}
             onDraw={drawGame}
+            engineError={engineInfo.status === "error"}
+            onRetryEngine={() => void retryEngine()}
           />
         )}
       </div>

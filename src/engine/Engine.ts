@@ -111,8 +111,11 @@ export class StockfishEngine {
   private currentFen = "startpos";
   private currentTurn: "w" | "b" = "w";
   private playToken = 0;
+  private loadToken = 0;
   private supportsWdl = false;
   private style: EngineStyle = "stockfish";
+  private searching = false;
+  private mutex: Promise<void> = Promise.resolve();
 
   get snapshot(): EngineInfo {
     return this.info;
@@ -133,11 +136,45 @@ export class StockfishEngine {
     this.worker?.postMessage(cmd);
   }
 
+  private exclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.mutex.then(fn, fn);
+    this.mutex = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private pokeStop(): void {
+    if (this.searching && this.worker) this.send("stop");
+  }
+
+  setStyle(style: EngineStyle): void {
+    this.style = style;
+    if (this.info.status === "analyzing") {
+      void this.startAnalysis(this.currentFen, style).catch(() => undefined);
+    }
+  }
+
   async load(): Promise<void> {
+    const token = ++this.loadToken;
+    this.playToken += 1;
+    this.lineWaiters = [];
+    this.searching = false;
     try {
       this.emit({ status: "loading", error: null });
+      if (this.worker) {
+        try {
+          this.send("quit");
+        } catch {
+          /* ignore */
+        }
+        this.worker.terminate();
+        this.worker = null;
+      }
       this.worker = new Worker(ENGINE_URL);
       this.worker.onerror = (ev) => {
+        this.searching = false;
         this.emit({
           status: "error",
           error: ev.message || "Failed to load Stockfish 18",
@@ -148,11 +185,17 @@ export class StockfishEngine {
         if (typeof ev.data !== "string") return;
         const line = ev.data.trim();
         if (!line) return;
-        this.handleLine(line);
+        try {
+          this.handleLine(line);
+        } catch {
+          /* never break the worker message pump */
+        }
       };
 
       await this.waitFor((l) => l === "uciok", () => this.send("uci"), 30000);
+      if (token !== this.loadToken) return;
       await this.waitFor((l) => l === "readyok", () => this.send("isready"), 15000);
+      if (token !== this.loadToken) return;
       this.send("setoption name Hash value 64");
       this.send("setoption name Threads value 1");
       this.send("setoption name Ponder value false");
@@ -163,6 +206,7 @@ export class StockfishEngine {
         error: null,
       });
     } catch (err) {
+      if (token !== this.loadToken) return;
       const message = err instanceof Error ? err.message : "Engine failed to start";
       this.emit({ status: "error", error: message });
       throw err;
@@ -175,20 +219,43 @@ export class StockfishEngine {
       this.emit({ identity: name.includes("Stockfish") ? name : "Stockfish 18" });
     }
     if (line.startsWith("option name UCI_ShowWDL")) this.supportsWdl = true;
-    for (const w of this.lineWaiters) w(line);
-    if (line.startsWith("info ")) this.parseInfo(line);
+    for (const w of this.lineWaiters.slice()) {
+      try {
+        w(line);
+      } catch {
+        /* waiter must not break the pump */
+      }
+    }
+    if (line.startsWith("info ")) {
+      try {
+        this.parseInfo(line);
+      } catch {
+        /* bad info line */
+      }
+    }
     if (line.startsWith("bestmove ")) {
-      const mv = line.split(/\s+/)[1] ?? null;
-      const engineBest = mv && mv !== "(none)" ? mv : null;
-      if (this.style === "chessapp") {
-        const pick = this.applyHybrid();
-        this.emit({
-          bestMove: pick?.pvUci[0] ?? engineBest,
-          planSan: pick?.pvSan ?? this.info.planSan,
-          chosenMultipv: pick?.multipv ?? this.info.chosenMultipv,
-        });
-      } else {
-        this.emit({ bestMove: engineBest });
+      this.searching = false;
+      try {
+        const mv = line.split(/\s+/)[1] ?? null;
+        const engineBest = mv && mv !== "(none)" ? mv : null;
+        if (this.style === "chessapp") {
+          let pick: PvLine | null = null;
+          try {
+            pick = this.applyHybrid();
+          } catch {
+            pick = null;
+          }
+          this.emit({
+            bestMove: pick?.pvUci[0] ?? engineBest,
+            planSan: pick?.pvSan ?? this.info.planSan,
+            chosenMultipv: pick?.multipv ?? this.info.chosenMultipv,
+          });
+        } else {
+          this.emit({ bestMove: engineBest });
+        }
+      } catch {
+        const mv = line.split(/\s+/)[1] ?? null;
+        this.emit({ bestMove: mv && mv !== "(none)" ? mv : null });
       }
     }
   }
@@ -207,6 +274,14 @@ export class StockfishEngine {
   }
 
   private parseInfo(line: string): void {
+    try {
+      this.parseInfoInner(line);
+    } catch {
+      /* a bad PV / hybrid score must not break onmessage */
+    }
+  }
+
+  private parseInfoInner(line: string): void {
     const tokens = line.split(/\s+/);
     if (tokens.includes("currmove") && !tokens.includes("pv")) return;
     const depthIdx = tokens.indexOf("depth");
@@ -221,7 +296,12 @@ export class StockfishEngine {
       return;
     }
     const pvUci = tokens.slice(pvIdx + 1).filter((t) => /^[a-h][1-8][a-h][1-8][qrbn]?$/.test(t));
-    const pvSan = movesToSanLine(resolveFen(this.currentFen), pvUci);
+    let pvSan = "";
+    try {
+      pvSan = movesToSanLine(resolveFen(this.currentFen), pvUci);
+    } catch {
+      pvSan = pvUci.join(" ");
+    }
     const lineObj: PvLine = {
       multipv,
       depth: Number.isFinite(depth) ? depth : 0,
@@ -249,11 +329,15 @@ export class StockfishEngine {
     let planSan = top?.pvSan ?? this.info.planSan;
     let chosenMultipv = top?.multipv ?? 1;
     if (this.style === "chessapp") {
-      const pick = pickHybridLine(this.currentFen, lines, this.currentTurn);
-      if (pick) {
-        bestMove = pick.pvUci[0] ?? bestMove;
-        planSan = pick.pvSan;
-        chosenMultipv = pick.multipv;
+      try {
+        const pick = pickHybridLine(this.currentFen, lines, this.currentTurn);
+        if (pick) {
+          bestMove = pick.pvUci[0] ?? bestMove;
+          planSan = pick.pvSan;
+          chosenMultipv = pick.multipv;
+        }
+      } catch {
+        /* keep Stockfish top line */
       }
     }
     this.emit({
@@ -287,20 +371,37 @@ export class StockfishEngine {
     });
   }
 
-  async stop(): Promise<void> {
-    if (!this.worker) return;
-
+  private async stopUnlocked(): Promise<void> {
+    if (!this.worker) {
+      this.searching = false;
+      return;
+    }
+    if (this.searching) {
+      try {
+        await this.waitFor(
+          (l) => l.startsWith("bestmove"),
+          () => this.send("stop"),
+          4000,
+        );
+      } catch {
+        this.send("stop");
+      }
+      this.searching = false;
+    }
     try {
-      await this.waitFor(
-        (l) => l.startsWith("bestmove") || l === "readyok",
-        () => {
-          this.send("stop");
-          this.send("isready");
-        },
-        4000,
-      );
+      await this.waitFor((l) => l === "readyok", () => this.send("isready"), 4000);
     } catch {
       this.send("isready");
+    }
+  }
+
+  async stop(): Promise<void> {
+    this.pokeStop();
+    try {
+      await this.exclusive(() => this.stopUnlocked());
+    } catch {
+      this.send("isready");
+      this.searching = false;
     }
   }
 
@@ -345,76 +446,102 @@ export class StockfishEngine {
     style: EngineStyle = "stockfish",
   ): Promise<string | null> {
     const token = ++this.playToken;
-    await this.stop();
-    if (token !== this.playToken) return null;
-    this.style = style;
-    if (style === "chessapp") {
-      const elo = DIFFICULTY_ELO[difficulty];
-      this.send("setoption name MultiPV value 4");
-      if (this.supportsWdl) this.send("setoption name UCI_ShowWDL value true");
-      if (elo === null) {
-        this.send("setoption name UCI_LimitStrength value false");
-      } else {
-        this.send("setoption name UCI_LimitStrength value true");
-        this.send("setoption name UCI_Elo value " + elo);
+    this.pokeStop();
+    return this.exclusive(async () => {
+      try {
+        await this.stopUnlocked();
+        if (token !== this.playToken) return null;
+        this.style = style;
+        if (style === "chessapp") {
+          const elo = DIFFICULTY_ELO[difficulty];
+          this.send("setoption name MultiPV value 4");
+          if (this.supportsWdl) this.send("setoption name UCI_ShowWDL value true");
+          if (elo === null) {
+            this.send("setoption name UCI_LimitStrength value false");
+          } else {
+            this.send("setoption name UCI_LimitStrength value true");
+            this.send("setoption name UCI_Elo value " + elo);
+          }
+        } else {
+          this.configurePlay(difficulty);
+        }
+        this.setPosition(fen);
+        this.emit({
+          status: "thinking",
+          lines: [],
+          bestMove: null,
+          depth: 0,
+          scoreText: "",
+          planSan: null,
+          chosenMultipv: null,
+        });
+        const extra = difficulty === "unlimited" ? 1600 : difficulty === "master" ? 400 : 0;
+        this.searching = true;
+        const line = await this.waitFor(
+          (l) => l.startsWith("bestmove"),
+          () => this.send(`go movetime ${movetime + extra}`),
+          20000,
+        );
+        this.searching = false;
+        if (token !== this.playToken) return null;
+        if (style === "chessapp") {
+          let pick: PvLine | null = null;
+          try {
+            pick = this.applyHybrid();
+          } catch {
+            pick = null;
+          }
+          const mv = pick?.pvUci[0] ?? line.split(/\s+/)[1];
+          const chosen = mv && mv !== "(none)" ? mv : null;
+          this.emit({
+            status: "ready",
+            bestMove: chosen,
+            planSan: pick?.pvSan ?? null,
+            chosenMultipv: pick?.multipv ?? null,
+          });
+          return chosen;
+        }
+        const mv = line.split(/\s+/)[1];
+        this.emit({ status: "ready", bestMove: mv && mv !== "(none)" ? mv : null });
+        return mv && mv !== "(none)" ? mv : null;
+      } catch {
+        this.searching = false;
+        this.send("isready");
+        if (token === this.playToken) this.emit({ status: "ready" });
+        return null;
       }
-    } else {
-      this.configurePlay(difficulty);
-    }
-    this.setPosition(fen);
-    this.emit({
-      status: "thinking",
-      lines: [],
-      bestMove: null,
-      depth: 0,
-      scoreText: "",
-      planSan: null,
-      chosenMultipv: null,
     });
-    const extra = difficulty === "unlimited" ? 1600 : difficulty === "master" ? 400 : 0;
-    const line = await this.waitFor(
-      (l) => l.startsWith("bestmove"),
-      () => this.send(`go movetime ${movetime + extra}`),
-      20000,
-    );
-    if (token !== this.playToken) return null;
-    if (style === "chessapp") {
-      const pick = this.applyHybrid();
-      const mv = pick?.pvUci[0] ?? line.split(/\s+/)[1];
-      const chosen = mv && mv !== "(none)" ? mv : null;
-      this.emit({
-        status: "ready",
-        bestMove: chosen,
-        planSan: pick?.pvSan ?? null,
-        chosenMultipv: pick?.multipv ?? null,
-      });
-      return chosen;
-    }
-    const mv = line.split(/\s+/)[1];
-    this.emit({ status: "ready", bestMove: mv && mv !== "(none)" ? mv : null });
-    return mv && mv !== "(none)" ? mv : null;
   }
 
   async startAnalysis(fen: string, style: EngineStyle = "stockfish"): Promise<void> {
     const token = ++this.playToken;
-    await this.stop();
-    if (token !== this.playToken) return;
-
-    this.configureAnalysis(style);
-    this.setPosition(fen);
-    this.emit({
-      status: "analyzing",
-      lines: [],
-      bestMove: null,
-      depth: 0,
-      scoreText: "…",
-      winPctWhite: null,
-      drawPct: null,
-      expectedPctWhite: null,
-      planSan: null,
-      chosenMultipv: null,
+    this.pokeStop();
+    return this.exclusive(async () => {
+      try {
+        await this.stopUnlocked();
+        if (token !== this.playToken) return;
+        this.configureAnalysis(style);
+        this.setPosition(fen);
+        this.emit({
+          status: "analyzing",
+          lines: [],
+          bestMove: null,
+          depth: 0,
+          scoreText: "…",
+          winPctWhite: null,
+          drawPct: null,
+          expectedPctWhite: null,
+          planSan: null,
+          chosenMultipv: null,
+        });
+        this.searching = true;
+        this.send("go infinite");
+      } catch {
+        this.searching = false;
+        this.send("isready");
+        if (token === this.playToken) this.emit({ status: "analyzing" });
+      }
     });
-    this.send("go infinite");
   }
 
   async evaluatePosition(
@@ -422,30 +549,45 @@ export class StockfishEngine {
     depth = 12,
     style: EngineStyle = "stockfish",
   ): Promise<{ pawns: number | null; best: string | null; winPctWhite: number | null; expectedPctWhite: number | null }> {
+    const empty = { pawns: null, best: null, winPctWhite: null, expectedPctWhite: null };
     const token = ++this.playToken;
-    await this.stop();
-    if (token !== this.playToken) {
-      return { pawns: null, best: null, winPctWhite: null, expectedPctWhite: null };
-    }
-    this.configureAnalysis(style);
-    this.send("setoption name MultiPV value 1");
-    this.setPosition(fen);
-    this.emit({ status: "analyzing" });
-    await this.waitFor(
-      (l) => l.startsWith("bestmove"),
-      () => this.send(`go depth ${depth}`),
-      15000,
-    );
-    return {
-      pawns: this.info.scorePawns,
-      best: this.info.bestMove,
-      winPctWhite: this.info.winPctWhite,
-      expectedPctWhite: this.info.expectedPctWhite,
-    };
+    this.pokeStop();
+    return this.exclusive(async () => {
+      try {
+        await this.stopUnlocked();
+        if (token !== this.playToken) return empty;
+        this.configureAnalysis(style);
+        this.send("setoption name MultiPV value 1");
+        this.setPosition(fen);
+        this.emit({ status: "analyzing" });
+        this.searching = true;
+        await this.waitFor(
+          (l) => l.startsWith("bestmove"),
+          () => this.send(`go depth ${depth}`),
+          15000,
+        );
+        this.searching = false;
+        if (token !== this.playToken) return empty;
+        return {
+          pawns: this.info.scorePawns,
+          best: this.info.bestMove,
+          winPctWhite: this.info.winPctWhite,
+          expectedPctWhite: this.info.expectedPctWhite,
+        };
+      } catch {
+        this.searching = false;
+        this.send("isready");
+        if (token === this.playToken) this.emit({ status: "ready" });
+        return empty;
+      }
+    });
   }
 
   destroy(): void {
     this.playToken += 1;
+    this.loadToken += 1;
+    this.lineWaiters = [];
+    this.searching = false;
     try {
       this.send("quit");
     } catch {

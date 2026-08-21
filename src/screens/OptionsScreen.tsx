@@ -12,6 +12,8 @@ interface Props {
   onNewGame: () => void;
   onResign: () => void;
   onDraw: () => void;
+  engineError?: boolean;
+  onRetryEngine?: () => void;
 }
 
 function Toggle({
@@ -52,6 +54,8 @@ export function OptionsScreen({
   onNewGame,
   onResign,
   onDraw,
+  engineError,
+  onRetryEngine,
 }: Props) {
   const patch = (p: Partial<Settings>) => onChange({ ...settings, ...p });
   return (
@@ -146,6 +150,11 @@ export function OptionsScreen({
           <span>Engine</span>
           <span className="row-value">{engineLabel}</span>
         </div>
+        {engineError && onRetryEngine && (
+          <button type="button" className="ios-row center" onClick={onRetryEngine}>
+            Retry engine
+          </button>
+        )}
       </div>
       {settings.engineStyle === "alphazero" && (
         <p className="group-hint">

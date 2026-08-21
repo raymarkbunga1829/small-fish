@@ -10,10 +10,12 @@ export function AnalysisTab({
   info,
   style,
   onMore,
+  onRetry,
 }: {
   info: EngineInfo;
   style: EngineStyle;
   onMore: () => void;
+  onRetry?: () => void;
 }) {
   const az = style === "alphazero" || style === "chessapp";
   const top = info.lines[0];
@@ -28,7 +30,16 @@ export function AnalysisTab({
           ···
         </button>
       </div>
-      {info.error && <div className="engine-error">{info.error}</div>}
+      {(info.status === "error" || info.error) && (
+        <div className="engine-error-block">
+          <div className="engine-error">{info.error || "Engine error"}</div>
+          {onRetry && (
+            <button type="button" className="retry-btn" onClick={onRetry}>
+              Retry engine
+            </button>
+          )}
+        </div>
+      )}
       {!info.error && !az && (
         <>
           <div className="analysis-depth">

@@ -40,6 +40,7 @@ interface Props {
   onJump: (ply: number) => void;
   onMore: () => void;
   onEngineStyle: (style: EngineStyle) => void;
+  onRetryEngine: () => void;
 }
 
 export function PlayScreen(props: Props) {
@@ -85,7 +86,12 @@ export function PlayScreen(props: Props) {
           />
         )}
         {props.tab === "analysis" && (
-          <AnalysisTab info={props.engine} style={props.engineStyle} onMore={props.onMore} />
+          <AnalysisTab
+            info={props.engine}
+            style={props.engineStyle}
+            onMore={props.onMore}
+            onRetry={props.onRetryEngine}
+          />
         )}
         {props.tab === "graph" && (
           <GraphTab
