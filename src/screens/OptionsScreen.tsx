@@ -1,5 +1,5 @@
-import type { Difficulty, GameMode, Settings, TimeControl } from "../types";
-import { DIFFICULTY_LABEL, MODE_LABEL, TIME_LABEL } from "../types";
+import type { Difficulty, EngineStyle, GameMode, Settings, TimeControl } from "../types";
+import { DIFFICULTY_LABEL, ENGINE_STYLE_LABEL, MODE_LABEL, TIME_LABEL } from "../types";
 
 interface Props {
   settings: Settings;
@@ -139,7 +139,32 @@ export function OptionsScreen({
           <span>Engine</span>
           <span className="row-value">{engineLabel}</span>
         </div>
+        <button
+          type="button"
+          className="ios-row"
+          onClick={() =>
+            patch({
+              engineStyle: cycle<EngineStyle>(
+                ["stockfish", "alphazero", "chessapp"],
+                settings.engineStyle,
+              ),
+            })
+          }
+        >
+          <span>Engine style</span>
+          <span className="row-value">{ENGINE_STYLE_LABEL[settings.engineStyle]} ›</span>
+        </button>
       </div>
+      {settings.engineStyle === "alphazero" && (
+        <p className="group-hint">
+          AlphaZero style uses Stockfish 18 with win%. Not DeepMind&apos;s weights.
+        </p>
+      )}
+      {settings.engineStyle === "chessapp" && (
+        <p className="group-hint">
+          Chess App is a hybrid on Stockfish 18 search. It does not out-Elo Stockfish.
+        </p>
+      )}
 
       <div className="group-label">PGN</div>
       <div className="ios-group">

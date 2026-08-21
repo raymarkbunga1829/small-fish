@@ -462,6 +462,61 @@ button {
   padding: 10px;
 }
 
+.az-win {
+  text-align: center;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-top: 8px;
+}
+.az-draw {
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.az-plan {
+  margin-top: 10px;
+  font-size: 14px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+.az-plan-k {
+  color: var(--muted);
+  font-weight: 600;
+  margin-right: 6px;
+}
+.policy-list {
+  margin-top: 10px;
+}
+.policy-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 14px;
+  padding: 3px 0;
+}
+.policy-row.top,
+.policy-row.chosen {
+  font-weight: 600;
+}
+.policy-row.chosen .policy-san::before {
+  content: "• ";
+  color: var(--blue);
+}
+.policy-san {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.policy-pct {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
 .graph-tab {
   height: 168px;
   flex: none;
@@ -780,6 +835,13 @@ button {
 }
 .row-value {
   color: var(--muted);
+}
+.group-hint {
+  font-size: 13px;
+  color: var(--muted);
+  padding: 4px 32px 10px;
+  line-height: 1.35;
+  margin: 0;
 }
 
 .switch {

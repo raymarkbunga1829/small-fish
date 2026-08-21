@@ -32,7 +32,15 @@ function readJson<T>(key: string, fallback: T): T {
 
 export function loadSettings(): Settings {
   const stored = readJson<Partial<Settings>>(SETTINGS_KEY, {});
-  return { ...DEFAULT_SETTINGS, ...stored };
+  const merged = { ...DEFAULT_SETTINGS, ...stored };
+  if (
+    merged.engineStyle !== "stockfish" &&
+    merged.engineStyle !== "alphazero" &&
+    merged.engineStyle !== "chessapp"
+  ) {
+    merged.engineStyle = "stockfish";
+  }
+  return merged;
 }
 
 export function saveSettings(settings: Settings): void {

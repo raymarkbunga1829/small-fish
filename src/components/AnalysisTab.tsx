@@ -1,9 +1,25 @@
-import type { EngineInfo } from "../types";
-import { statusLabel } from "../engine/Engine";
+import type { EngineInfo, EngineStyle } from "../types";
+import { firstSan, policyPercents, statusLabel } from "../engine/Engine";
 
-export function AnalysisTab({ info, onMore }: { info: EngineInfo; onMore: () => void }) {
+function fmtPct(n: number | null): string {
+  if (n == null || !Number.isFinite(n)) return "—";
+  return `${Math.round(n)}%`;
+}
+
+export function AnalysisTab({
+  info,
+  style,
+  onMore,
+}: {
+  info: EngineInfo;
+  style: EngineStyle;
+  onMore: () => void;
+}) {
+  const az = style === "alphazero" || style === "chessapp";
   const top = info.lines[0];
   const extras = info.lines.slice(1);
+  const percents = az ? policyPercents(info.lines) : [];
+
   return (
     <div className="analysis-tab">
       <div className="analysis-head">
@@ -13,7 +29,7 @@ export function AnalysisTab({ info, onMore }: { info: EngineInfo; onMore: () => 
         </button>
       </div>
       {info.error && <div className="engine-error">{info.error}</div>}
-      {!info.error && (
+      {!info.error && !az && (
         <>
           <div className="analysis-depth">
             Depth: {info.depth || "—"}
@@ -27,6 +43,29 @@ export function AnalysisTab({ info, onMore }: { info: EngineInfo; onMore: () => 
             </div>
           ))}
           {info.identity && <div className="engine-id">{info.identity}</div>}
+        </>
+      )}
+      {!info.error && az && (
+        <>
+          <div className="az-win">White {fmtPct(info.winPctWhite)}</div>
+          <div className="az-draw">Draw {fmtPct(info.drawPct)}</div>
+          {style === "chessapp" && info.planSan && (
+            <div className="az-plan">
+              <span className="az-plan-k">Plan</span> {info.planSan}
+            </div>
+          )}
+          <div className="analysis-depth">Depth: {info.depth || "—"}</div>
+          <div className="policy-list">
+            {info.lines.map((l, i) => (
+              <div
+                key={l.multipv}
+                className={`policy-row${style === "chessapp" && l.multipv === info.chosenMultipv ? " chosen" : ""}${i === 0 && style !== "chessapp" ? " top" : ""}`}
+              >
+                <span className="policy-san">{firstSan(l.pvSan)}</span>
+                <span className="policy-pct">{fmtPct(percents[i] ?? null)}</span>
+              </div>
+            ))}
+          </div>
         </>
       )}
     </div>

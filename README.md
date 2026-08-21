@@ -14,6 +14,7 @@ Served as static files, not bundled by Vite. Talks UCI in a worker.
 ## Features
 - Play vs computer, two players, clocks, difficulty presets
 - Analysis with MultiPV, eval, PV, best-move arrow, eval graph
+- Engine styles: Stockfish (cp), AlphaZero (win%), Chess App (hybrid on Stockfish 18)
 - Game list, PGN import/export, takeback, flip, dark mode, PWA
 ## Stack
 Vite + React 19 + TypeScript. chess.js. vite-plugin-pwa. vercel.json.

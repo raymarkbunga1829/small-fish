@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Chess, type Square } from "chess.js";
 import type {
   EngineInfo,
+  EngineStyle,
   GameMode,
   MoveComment,
   PieceSymbol,
@@ -10,8 +11,8 @@ import type {
   Settings,
   Tab,
 } from "./types";
-import { ENGINE_NAME, PLAYER_NAME } from "./types";
-import { StockfishEngine } from "./engine/Engine";
+import { ENGINE_NAME, PLAYER_NAME, STYLE_ENGINE_NAMES } from "./types";
+import { pawnsToWinPct, StockfishEngine } from "./engine/Engine";
 import { cloneAtPly, classifySwing, endReason, loadGame, resultOf, uciToMove } from "./lib/chessUtil";
 import { SAMPLE_GAME } from "./lib/sample";
 import {
@@ -31,10 +32,21 @@ import { MoreMenu } from "./components/MoreMenu";
 import { PromotionPicker } from "./components/PromotionPicker";
 import { ImportPgn, Toast } from "./components/Overlays";
 
-function namesFor(mode: GameMode): { white: string; black: string } {
-  if (mode === "white") return { white: PLAYER_NAME, black: ENGINE_NAME };
-  if (mode === "black") return { white: ENGINE_NAME, black: PLAYER_NAME };
+function namesFor(mode: GameMode, style: EngineStyle): { white: string; black: string } {
+  const engine = STYLE_ENGINE_NAMES[style];
+  if (mode === "white") return { white: PLAYER_NAME, black: engine };
+  if (mode === "black") return { white: engine, black: PLAYER_NAME };
   return { white: "White", black: "Black" };
+}
+
+function graphValue(style: EngineStyle, info: { scorePawns: number | null; winPctWhite: number | null; expectedPctWhite: number | null }): number | null {
+  if (style === "chessapp") {
+    return info.expectedPctWhite ?? info.winPctWhite ?? pawnsToWinPct(info.scorePawns);
+  }
+  if (style === "alphazero") {
+    return info.winPctWhite ?? pawnsToWinPct(info.scorePawns);
+  }
+  return info.scorePawns;
 }
 
 function timeMs(tc: Settings["timeControl"]): number {
@@ -89,8 +101,13 @@ export default function App() {
     depth: 0,
     scoreText: "",
     scorePawns: null,
+    winPctWhite: null,
+    drawPct: null,
+    expectedPctWhite: null,
     lines: [],
     bestMove: null,
+    planSan: null,
+    chosenMultipv: null,
   });
   const [analyzing, setAnalyzing] = useState(false);
   const [reviewing, setReviewing] = useState(false);
@@ -155,7 +172,7 @@ export default function App() {
 
   const newGame = useCallback(
     (mode = settings.gameMode) => {
-      const n = namesFor(mode);
+      const n = namesFor(mode, settings.engineStyle);
       const g = new Chess();
       applyHeaders(g, n.white, n.black, "Casual Game", "*");
       setWhite(n.white);
@@ -174,7 +191,7 @@ export default function App() {
       setScreen("play");
       setTab("game");
     },
-    [settings.gameMode, settings.timeControl],
+    [settings.gameMode, settings.timeControl, settings.engineStyle],
   );
 
   useEffect(() => {
@@ -187,6 +204,13 @@ export default function App() {
   useEffect(() => {
     saveSettings(settings);
   }, [settings]);
+
+  useEffect(() => {
+    const engine = STYLE_ENGINE_NAMES[settings.engineStyle];
+    const prior = new Set(Object.values(STYLE_ENGINE_NAMES));
+    if (settings.gameMode === "white" && prior.has(black) && black !== engine) setBlack(engine);
+    if (settings.gameMode === "black" && prior.has(white) && white !== engine) setWhite(engine);
+  }, [settings.engineStyle, settings.gameMode, white, black]);
 
   useEffect(() => {
     saveGames(games);
@@ -245,7 +269,7 @@ export default function App() {
     if (pos.isGameOver()) return;
     busyRef.current = true;
     try {
-      const uci = await eng.playMove(pos.fen(), settings.difficulty);
+      const uci = await eng.playMove(pos.fen(), settings.difficulty, 900, settings.engineStyle);
       if (!uci) return;
       const parsed = uciToMove(uci);
       if (!parsed) return;
@@ -253,13 +277,14 @@ export default function App() {
       const mv = tip.move(parsed);
       if (!mv) return;
       const nextEvals = evals.slice();
-      if (eng.snapshot.scorePawns != null) nextEvals[tip.history().length - 1] = eng.snapshot.scorePawns;
+      const gv = graphValue(settings.engineStyle, eng.snapshot);
+      if (gv != null) nextEvals[tip.history().length - 1] = gv;
       setEvals(nextEvals);
       commitPgn(tip);
     } finally {
       busyRef.current = false;
     }
-  }, [pgn, ply, settings.difficulty, evals, white, black, event]);
+  }, [pgn, ply, settings.difficulty, settings.engineStyle, evals, white, black, event]);
 
   useEffect(() => {
     if (engineTurn && engineInfo.status !== "loading" && engineInfo.status !== "error" && !analyzing) {
@@ -271,11 +296,11 @@ export default function App() {
     const eng = engineRef.current;
     if (!eng) return;
     if (tab !== "analysis" && !analyzing) return;
-    void eng.startAnalysis(view.fen());
+    void eng.startAnalysis(view.fen(), settings.engineStyle);
     return () => {
       void eng.stop();
     };
-  }, [tab, ply, pgn, analyzing]);
+  }, [tab, ply, pgn, analyzing, settings.engineStyle]);
 
   useEffect(() => {
     if (!clockOn || over) return;
@@ -435,7 +460,7 @@ export default function App() {
     } else {
       setAnalyzing(true);
       setTab("analysis");
-      await eng.startAnalysis(view.fen());
+      await eng.startAnalysis(view.fen(), settings.engineStyle);
     }
   };
 
@@ -452,9 +477,15 @@ export default function App() {
       for (let i = 0; i < hist.length; i++) {
         const before = cloneAtPly(pgn, i - 1);
         const after = cloneAtPly(pgn, i);
-        const a = await eng.evaluatePosition(before.fen(), 10);
-        const b = await eng.evaluatePosition(after.fen(), 10);
-        if (b.pawns != null) scores[i] = b.pawns;
+        const a = await eng.evaluatePosition(before.fen(), 10, settings.engineStyle);
+        const b = await eng.evaluatePosition(after.fen(), 10, settings.engineStyle);
+        if (b.pawns != null || b.winPctWhite != null || b.expectedPctWhite != null) {
+          scores[i] = graphValue(settings.engineStyle, {
+            scorePawns: b.pawns,
+            winPctWhite: b.winPctWhite,
+            expectedPctWhite: b.expectedPctWhite,
+          });
+        }
         if (a.pawns != null && b.pawns != null) {
           const mover = hist[i].color;
           const loss = mover === "w" ? a.pawns - b.pawns : b.pawns - a.pawns;
@@ -563,6 +594,7 @@ export default function App() {
             comments={comments}
             evals={evals}
             engine={engineInfo}
+            engineStyle={settings.engineStyle}
             banner={over ? reason : null}
             onMove={makeMove}
             onFlip={() => setFlipped((f) => !f)}

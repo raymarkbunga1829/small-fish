@@ -1,5 +1,5 @@
 import type { Chess, Square } from "chess.js";
-import type { EngineInfo, MoveComment, Tab } from "../types";
+import type { EngineInfo, EngineStyle, MoveComment, Tab } from "../types";
 import { Board } from "../components/Board";
 import { PlayerRow } from "../components/PlayerRow";
 import { GameTab } from "../components/GameTab";
@@ -31,6 +31,7 @@ interface Props {
   comments: MoveComment[];
   evals: Array<number | null>;
   engine: EngineInfo;
+  engineStyle: EngineStyle;
   banner: string | null;
   onMove: (from: Square, to: Square, promotion?: string) => boolean;
   onFlip: () => void;
@@ -75,7 +76,7 @@ export function PlayScreen(props: Props) {
           />
         )}
         {props.tab === "analysis" && (
-          <AnalysisTab info={props.engine} onMore={props.onMore} />
+          <AnalysisTab info={props.engine} style={props.engineStyle} onMore={props.onMore} />
         )}
         {props.tab === "graph" && (
           <GraphTab
@@ -84,6 +85,7 @@ export function PlayScreen(props: Props) {
             totalPlies={props.moves.length}
             comments={props.comments}
             onJump={props.onJump}
+            style={props.engineStyle}
           />
         )}
       </div>
